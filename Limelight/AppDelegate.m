@@ -7,6 +7,7 @@
 //
 
 #import "AppDelegate.h"
+#import <UIKit/UIScene.h>
 
 @implementation AppDelegate
 
@@ -15,60 +16,65 @@
 @synthesize persistentStoreCoordinator = _persistentStoreCoordinator;
 
 static NSOperationQueue* mainQueue;
-
-#if TARGET_OS_TV
-static NSString* DB_NAME = @"Moonlight_tvOS.bin";
-#else
 static NSString* DB_NAME = @"Limelight_iOS.sqlite";
-#endif
 
-- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
-#if !TARGET_OS_TV
-    UIApplicationShortcutItem* shortcut = [launchOptions valueForKey:UIApplicationLaunchOptionsShortcutItemKey];
-    if (shortcut != nil) {
-        _pcUuidToLoad = (NSString*)[shortcut.userInfo objectForKey:@"UUID"];
+// 必須、新しい Scene ライフサイクルで、シーンが接続される際に呼び出されるメソッド
+- (UISceneConfiguration *)application:(UIApplication *)application
+           configurationForConnectingSceneSession:(UISceneSession *)connectingSceneSession
+                              options:(UISceneConnectionOptions *)options {
+    
+    // Scene接続オプションからショートカットアイテムを取得
+    UIApplicationShortcutItem *shortcutItem = options.shortcutItem;
+    if (shortcutItem != nil) {
+        // 既存のプロパティ (pcUuidToLoad) に値をセット
+        self.pcUuidToLoad = (NSString*)[shortcutItem.userInfo objectForKey:@"UUID"];
     }
-#endif
+
+    // 既定の Scene 設定を返す
+    return [UISceneConfiguration configurationWithName:@"Default Configuration" sessionRole:connectingSceneSession.role];
+}
+
+//必須
+- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
+    
+    #if defined(UISceneDidConnectNotification)
+        // 外部モニタの接続と切断を監視するための新しい Scene 通知
+        // 古い UIScreenDidConnectNotification の監視コードは削除済み
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(sceneDidConnect:)
+                                                     name:UISceneDidConnectNotification
+                                                   object:nil];
+    
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(sceneDidDisconnect:)
+                                                 name:UISceneDidDisconnectNotification
+                                               object:nil];
+    #endif
     return YES;
 }
 
-#if !TARGET_OS_TV
-- (void)application:(UIApplication *)application performActionForShortcutItem:(UIApplicationShortcutItem *)shortcutItem completionHandler:(void (^)(BOOL succeeded))completionHandler {
-    _pcUuidToLoad = (NSString*)[shortcutItem.userInfo objectForKey:@"UUID"];
-    _shortcutCompletionHandler = completionHandler;
-}
-#endif
-
-- (void)applicationWillResignActive:(UIApplication *)application
-{
-    // Sent when the application is about to move from active to inactive state. This can occur for certain types of temporary interruptions (such as an incoming phone call or SMS message) or when the user quits the application and it begins the transition to the background state.
-    // Use this method to pause ongoing tasks, disable timers, and throttle down OpenGL ES frame rates. Games should use this method to pause the game.
+// 残しておいた方がいい。アプリ実行中にショートカットがタップされたときに呼び出される
+- (void)application:(UIApplication *)application handleEventsForBackgroundURLSession:(NSString *)identifier completionHandler:(void (^)(void))completionHandler {
 }
 
-- (void)applicationDidEnterBackground:(UIApplication *)application
-{
+
+
+//残しておいた方が良い
+- (void)applicationDidEnterBackground:(UIApplication *)application{
     // Use this method to release shared resources, save user data, invalidate timers, and store enough application state information to restore your application to its current state in case it is terminated later.
     // If your application supports background execution, this method is called instead of applicationWillTerminate: when the user quits.
 }
 
-- (void)applicationWillEnterForeground:(UIApplication *)application
-{
-    // Called as part of the transition from the background to the inactive state; here you can undo many of the changes made on entering the background.
-}
 
-- (void)applicationDidBecomeActive:(UIApplication *)application
-{
-    // Restart any tasks that were paused (or not yet started) while the application was inactive. If the application was previously in the background, optionally refresh the user interface.
-}
-
+//必須
 - (void)applicationWillTerminate:(UIApplication *)application
 {
     // Saves changes in the application's managed object context before the application terminates.
     [self saveContext];
 }
 
-- (void)saveContext
-{
+//必須
+- (void)saveContext{
     NSManagedObjectContext *managedObjectContext = [self managedObjectContext];
     if (managedObjectContext != nil) {
         [managedObjectContext performBlock:^{
@@ -79,11 +85,6 @@ static NSString* DB_NAME = @"Limelight_iOS.sqlite";
             if (![managedObjectContext save:&error]) {
                 Log(LOG_E, @"Critical database error: %@, %@", error, [error userInfo]);
             }
-            
-#if TARGET_OS_TV
-            NSData* dbData = [NSData dataWithContentsOfURL:[[[[NSFileManager defaultManager] URLsForDirectory:NSCachesDirectory inDomains:NSUserDomainMask] lastObject] URLByAppendingPathComponent:DB_NAME]];
-            [[NSUserDefaults standardUserDefaults] setObject:dbData forKey:DB_NAME];
-#endif
         }];
     }
 }
@@ -92,8 +93,8 @@ static NSString* DB_NAME = @"Limelight_iOS.sqlite";
 
 // Returns the managed object context for the application.
 // If the context doesn't already exist, it is created and bound to the persistent store coordinator for the application.
-- (NSManagedObjectContext *)managedObjectContext
-{
+//必須
+- (NSManagedObjectContext *)managedObjectContext{
     if (_managedObjectContext != nil) {
         return _managedObjectContext;
     }
@@ -108,8 +109,8 @@ static NSString* DB_NAME = @"Limelight_iOS.sqlite";
 
 // Returns the managed object model for the application.
 // If the model doesn't already exist, it is created from the application's model.
-- (NSManagedObjectModel *)managedObjectModel
-{
+//必須
+- (NSManagedObjectModel *)managedObjectModel{
     if (_managedObjectModel != nil) {
         return _managedObjectModel;
     }
@@ -119,8 +120,8 @@ static NSString* DB_NAME = @"Limelight_iOS.sqlite";
 
 // Returns the persistent store coordinator for the application.
 // If the coordinator doesn't already exist, it is created and the application's store added to it.
-- (NSPersistentStoreCoordinator *)persistentStoreCoordinator
-{
+//必須
+- (NSPersistentStoreCoordinator *)persistentStoreCoordinator{
     if (_persistentStoreCoordinator != nil) {
         return _persistentStoreCoordinator;
     }
@@ -132,16 +133,9 @@ static NSString* DB_NAME = @"Limelight_iOS.sqlite";
                              [NSNumber numberWithBool:YES], NSInferMappingModelAutomaticallyOption, nil];
     NSString* storeType;
     
-#if TARGET_OS_TV
-    // Use a binary store for tvOS since we will need exclusive access to the file
-    // to serialize into NSUserDefaults.
-    storeType = NSBinaryStoreType;
-#else
     storeType = NSSQLiteStoreType;
-#endif
     
     // We must ensure the persistent store is ready to opened
-    [self preparePersistentStore];
     
     if (![_persistentStoreCoordinator addPersistentStoreWithType:storeType configuration:nil URL:[self getStoreURL] options:options error:&error]) {
         // Log the error
@@ -160,55 +154,67 @@ static NSString* DB_NAME = @"Limelight_iOS.sqlite";
 #pragma mark - Application's Documents directory
 
 // Returns the URL to the application's Documents directory.
-- (NSURL *)applicationDocumentsDirectory
-{
+//必須
+- (NSURL *)applicationDocumentsDirectory{
     return [[[NSFileManager defaultManager] URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask] lastObject];
 }
 
-- (void) dropDatabase
-{
+//必須
+- (void) dropDatabase{
     // Delete the file on disk
     [[NSFileManager defaultManager] removeItemAtURL:[self getStoreURL] error:nil];
-    
-#if TARGET_OS_TV
-    // Also delete the copy in the NSUserDefaults on tvOS
-    [[NSUserDefaults standardUserDefaults] removeObjectForKey:DB_NAME];
-#endif
 }
 
-- (void) preparePersistentStore
-{
-#if TARGET_OS_TV
-    // On tvOS, we may need to inflate the DB from NSUserDefaults
-    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES);
-    NSString *cacheDirectory = [paths objectAtIndex:0];
-    NSString *dbPath = [cacheDirectory stringByAppendingPathComponent:DB_NAME];
-    
-    // Always prefer the on disk version
-    if (![[NSFileManager defaultManager] fileExistsAtPath:dbPath]) {
-        // If that is unavailable, inflate it from NSUserDefaults
-        NSData* data = [[NSUserDefaults standardUserDefaults] dataForKey:DB_NAME];
-        if (data != nil) {
-            Log(LOG_I, @"Inflating database from NSUserDefaults");
-            [data writeToFile:dbPath atomically:YES];
-        }
-        else {
-            Log(LOG_I, @"No database on disk or in NSUserDefaults");
-        }
-    }
-    else {
-        Log(LOG_I, @"Using cached database");
-    }
-#endif
-}
-
+//必須
 - (NSURL*) getStoreURL {
-#if TARGET_OS_TV
-    // We use the cache folder to store our database on tvOS
-    return [[[[NSFileManager defaultManager] URLsForDirectory:NSCachesDirectory inDomains:NSUserDomainMask] lastObject] URLByAppendingPathComponent:DB_NAME];
-#else
     return [[self applicationDocumentsDirectory] URLByAppendingPathComponent:DB_NAME];
-#endif
+}
+	
+// 必須、シーンがスクリーンに接続された時に呼び出される
+- (void)sceneDidConnect:(NSNotification *)notification {
+    if ([notification.object isKindOfClass:[UIWindowScene class]]) {
+        UIWindowScene *scene = (UIWindowScene *)notification.object;
+        UIScreen *primaryScreen = [self primaryScreenContext]; // 新しいヘルパーメソッドを使用
+        
+        // 接続されたスクリーンがプライマリ画面と異なる場合、外部モニタだと判断する
+        if (primaryScreen != nil && scene.screen != primaryScreen) {
+            NSLog(@"外部モニタシーンが接続されました。");
+            [[NSNotificationCenter defaultCenter] postNotificationName:@"ExternalScreenConnected"
+                                                              object:nil
+                                                            userInfo:@{@"screen": scene.screen}];
+        }
+    }
 }
 
+// 必須、シーンがスクリーンから切断された時に呼び出される
+- (void)sceneDidDisconnect:(NSNotification *)notification {
+    if ([notification.object isKindOfClass:[UIWindowScene class]]) {
+        UIWindowScene *scene = (UIWindowScene *)notification.object;
+        UIScreen *primaryScreen = [self primaryScreenContext]; // 新しいヘルパーメソッドを使用
+
+        // 切断されたスクリーンがプライマリ画面と異なる場合、外部モニタだったと判断する
+        if (primaryScreen != nil && scene.screen != primaryScreen) {
+            NSLog(@"外部モニタシーンが切断されました。");
+            [[NSNotificationCenter defaultCenter] postNotificationName:@"ExternalScreenDisconnected"
+                                                              object:nil
+                                                            userInfo:@{@"screen": scene.screen}];
+        }
+    }
+}
+
+//必須、プライマリ画面を検出する
+- (UIScreen *)primaryScreenContext {
+    // 接続されている全てのシーンから、メインのキーウィンドウを持つシーンのスクリーンを探す
+    for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        // アクティブなシーンのウィンドウをチェック
+        for (UIWindow *window in scene.windows) {
+            // キーウィンドウ（通常はアプリのメインコンテンツが表示されているウィンドウ）が見つかったら、そのスクリーンを返す
+            if (window.isKeyWindow) {
+                return window.screen;
+            }
+        }
+    }
+    // メインのキーウィンドウが見つからない場合は nil を返す
+    return nil;
+}
 @end

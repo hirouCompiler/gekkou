@@ -18,16 +18,19 @@
 #include <arpa/inet.h>
 #include <Limelight.h>
 
-#if TARGET_OS_TV
-#import <AVFoundation/AVDisplayCriteria.h>
-#import <AVKit/AVDisplayManager.h>
-#import <AVKit/UIWindow.h>
-#endif
-
 @interface AVDisplayCriteria()
 @property(readonly) int videoDynamicRange;
 @property(readonly, nonatomic) float refreshRate;
 - (id)initWithRefreshRate:(float)arg1 videoDynamicRange:(int)arg2;
+@end
+
+
+@interface StreamFrameViewController()
+//追加機能
+//外部モニタ用のウィンドウを保持するプロパティ
+@property (nonatomic, strong) UIWindow *externalWindow;
+//映像を描画するStreamViewを保存するプロパティ(self.streamViewをプロパティとして公開する)
+@property (nonatomic, strong) StreamView *streamView;
 @end
 
 @implementation StreamFrameViewController {
@@ -43,40 +46,18 @@
     UILabel *_stageLabel;
     UILabel *_tipLabel;
     UIActivityIndicatorView *_spinner;
-    StreamView *_streamView;
     UIScrollView *_scrollView;
     BOOL _userIsInteracting;
     CGSize _keyboardSize;
-    
-#if !TARGET_OS_TV
     UIScreenEdgePanGestureRecognizer *_exitSwipeRecognizer;
-#endif
 }
 
-- (void)viewDidAppear:(BOOL)animated
-{
+- (void)viewDidAppear:(BOOL)animated{
     [super viewDidAppear:animated];
-    
-#if !TARGET_OS_TV
     [[self revealViewController] setPrimaryViewController:self];
-#endif
 }
 
-#if TARGET_OS_TV
-- (void)controllerPauseButtonPressed:(id)sender { }
-- (void)controllerPauseButtonDoublePressed:(id)sender {
-    Log(LOG_I, @"Menu double-pressed -- backing out of stream");
-    [self returnToMainFrame];
-}
-- (void)controllerPlayPauseButtonPressed:(id)sender {
-    Log(LOG_I, @"Play/Pause button pressed -- backing out of stream");
-    [self returnToMainFrame];
-}
-#endif
-
-
-- (void)viewDidLoad
-{
+- (void)viewDidLoad{
     [super viewDidLoad];
     
     [self.navigationController setNavigationBarHidden:YES animated:YES];
@@ -95,11 +76,9 @@
     
     _spinner = [[UIActivityIndicatorView alloc] init];
     [_spinner setUserInteractionEnabled:NO];
-#if TARGET_OS_TV
-    [_spinner setActivityIndicatorViewStyle:UIActivityIndicatorViewStyleWhiteLarge];
-#else
-    [_spinner setActivityIndicatorViewStyle:UIActivityIndicatorViewStyleWhite];
-#endif
+
+    [_spinner setActivityIndicatorViewStyle:UIActivityIndicatorViewStyleMedium];
+
     [_spinner sizeToFit];
     [_spinner startAnimating];
     _spinner.center = CGPointMake(self.view.frame.size.width / 2, self.view.frame.size.height / 2 - _stageLabel.frame.size.height - _spinner.frame.size.height);
@@ -107,44 +86,20 @@
     _controllerSupport = [[ControllerSupport alloc] initWithConfig:self.streamConfig delegate:self];
     _inactivityTimer = nil;
     
-    _streamView = [[StreamView alloc] initWithFrame:self.view.frame];
-    [_streamView setupStreamView:_controllerSupport interactionDelegate:self config:self.streamConfig];
+    self.streamView = [[StreamView alloc] initWithFrame:self.view.frame];
+    [self.streamView setupStreamView:_controllerSupport interactionDelegate:self config:self.streamConfig];
     
-#if TARGET_OS_TV
-    if (!_menuTapGestureRecognizer || !_menuDoubleTapGestureRecognizer || !_playPauseTapGestureRecognizer) {
-        _menuTapGestureRecognizer = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(controllerPauseButtonPressed:)];
-        _menuTapGestureRecognizer.allowedPressTypes = @[@(UIPressTypeMenu)];
-
-        _playPauseTapGestureRecognizer = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(controllerPlayPauseButtonPressed:)];
-        _playPauseTapGestureRecognizer.allowedPressTypes = @[@(UIPressTypePlayPause)];
-        
-        _menuDoubleTapGestureRecognizer = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(controllerPauseButtonDoublePressed:)];
-        _menuDoubleTapGestureRecognizer.numberOfTapsRequired = 2;
-        [_menuTapGestureRecognizer requireGestureRecognizerToFail:_menuDoubleTapGestureRecognizer];
-        _menuDoubleTapGestureRecognizer.allowedPressTypes = @[@(UIPressTypeMenu)];
-    }
-    
-    [self.view addGestureRecognizer:_menuTapGestureRecognizer];
-    [self.view addGestureRecognizer:_menuDoubleTapGestureRecognizer];
-    [self.view addGestureRecognizer:_playPauseTapGestureRecognizer];
-
-#else
     _exitSwipeRecognizer = [[UIScreenEdgePanGestureRecognizer alloc] initWithTarget:self action:@selector(edgeSwiped)];
     _exitSwipeRecognizer.edges = UIRectEdgeLeft;
     _exitSwipeRecognizer.delaysTouchesBegan = NO;
     _exitSwipeRecognizer.delaysTouchesEnded = NO;
     
     [self.view addGestureRecognizer:_exitSwipeRecognizer];
-#endif
     
     _tipLabel = [[UILabel alloc] init];
     [_tipLabel setUserInteractionEnabled:NO];
-    
-#if TARGET_OS_TV
-    [_tipLabel setText:@"Tip: Tap the Play/Pause button on the Apple TV Remote to disconnect from your PC"];
-#else
+
     [_tipLabel setText:@"Tip: Swipe from the left edge to disconnect from your PC"];
-#endif
     
     [_tipLabel sizeToFit];
     _tipLabel.textColor = [UIColor whiteColor];
@@ -152,7 +107,7 @@
     _tipLabel.center = CGPointMake(self.view.frame.size.width / 2, self.view.frame.size.height * 0.9);
     
     _streamMan = [[StreamManager alloc] initWithConfig:self.streamConfig
-                                            renderView:_streamView
+                                            renderView:self.streamView
                                    connectionCallbacks:self];
     NSOperationQueue* opQueue = [[NSOperationQueue alloc] init];
     [opQueue addOperation:_streamMan];
@@ -172,6 +127,25 @@
                                                  name: UIApplicationDidEnterBackgroundNotification
                                                object: nil];
 
+    // AppDelegate が発する「外部モニタ接続」通知を監視する
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(handleScreenConnect:)
+                                                 name:@"ExternalScreenConnected"
+                                               object:nil];
+        
+        // AppDelegate が発する「外部モニタ切断」通知を監視する
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(handleScreenDisconnect:)
+                                                 name:@"ExternalScreenDisconnected"
+                                               object:nil];
+                                                   
+    //起動時に既に接続されているかチェックする
+    if ([self findExternalScreen] != nil) {
+        //既に接続されている場合の処理を呼ぶ
+        [self handleScreenConnect:nil];
+        //通知オブジェクトは使わないので nil でOK
+    }
+    
 #if 0
     // FIXME: This doesn't work reliably on iPad for some reason. Showing and hiding the keyboard
     // several times in a row will not correctly restore the state of the UIScrollView.
@@ -189,21 +163,20 @@
     // Only enable scroll and zoom in absolute touch mode
     if (_settings.absoluteTouchMode) {
         _scrollView = [[UIScrollView alloc] initWithFrame:self.view.frame];
-#if !TARGET_OS_TV
+
         [_scrollView.panGestureRecognizer setMinimumNumberOfTouches:2];
-#endif
+
         [_scrollView setShowsHorizontalScrollIndicator:NO];
         [_scrollView setShowsVerticalScrollIndicator:NO];
         [_scrollView setDelegate:self];
         [_scrollView setMaximumZoomScale:10.0f];
         
         // Add StreamView inside a UIScrollView for absolute mode
-        [_scrollView addSubview:_streamView];
+        [_scrollView addSubview:self.streamView];
         [self.view addSubview:_scrollView];
-    }
-    else {
+    }else {
         // Add StreamView directly in relative mode
-        [self.view addSubview:_streamView];
+        [self.view addSubview:self.streamView];
     }
     
     [self.view addSubview:_stageLabel];
@@ -211,8 +184,154 @@
     [self.view addSubview:_tipLabel];
 }
 
+//StreamFrameViewController が破棄される時に、通知の監視を解除する
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+// 接続されている外部スクリーンを探す
+- (UIScreen *)findExternalScreen {
+    // アプリに接続されているすべてのシーン（ウィンドウ）をチェックする
+    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        
+        // それが「ウィンドウシーン」であり、かつ「アクティブ」であるか確認
+        if ([scene isKindOfClass:[UIWindowScene class]] &&
+            (scene.activationState == UISceneActivationStateForegroundActive || scene.activationState == UISceneActivationStateForegroundInactive)) {
+            
+            UIScreen *internalScreen = self.view.window.screen;
+            
+//もし、そのシーンのスクリーンが「iPad本体のメインスクリーン」ではないなら
+            if (internalScreen == nil) {
+                NSLog(@"findExternalScreen: 内部スクリーンが見つかりません。");
+                return nil;
+            }
+        }
+    }
+    // 外部スクリーンが見つからなかった場合
+    return nil;
+}
+
+//外部モニタ接続事の処理
+- (void)handleScreenConnect:(NSNotification *)notification {
+    NSLog(@"StreamFrameViewController が接続を検知しました。");
+    
+    // 既に外部ウィンドウが存在する場合は、何もしない（二重実行を防ぐ）
+    if (self.externalWindow != nil) {
+        return;
+    }
+
+    // 外部スクリーンを取得する
+    UIScreen *externalScreen = nil;
+    if (notification != nil && [notification.userInfo objectForKey:@"screen"]) {
+        // AppDelegateからの通知の userInfo から UIScreen を取得
+        externalScreen = [notification.userInfo objectForKey:@"screen"];
+    } else {
+        // viewDidLoadからの呼び出し（通知がnil）の場合、自分で探す
+        externalScreen = [self findExternalScreen];
+    }
+    
+    if (externalScreen == nil) {
+        NSLog(@"エラー: 接続されたはずが、有効な外部スクリーンが見つかりません。");
+        return;
+    }
+    // 1番目の外部スクリーンを取得
+    
+    // DataManager から "Moonlightで設定した解像度" を取得する
+    // （_settings は viewDidLoad で既に初期化済み）
+    CGFloat streamWidth = [_settings.width floatValue];
+    CGFloat streamHeight = [_settings.height floatValue];
+    
+    // もし解像度が設定されていなければ（0なら）、安全のためにFullHDにしておく
+    if (streamWidth == 0 || streamHeight == 0) {
+        streamWidth = 1920;
+        streamHeight = 1080;
+    }
+    CGRect windowFrame = CGRectMake(0, 0, streamWidth, streamHeight);
+
+    //外部スクリーンに関連づけられたUIWindoSceneを探す。
+    UIWindowScene *targetScene = nil;
+        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if ([scene isKindOfClass:[UIWindowScene class]]) {
+            UIWindowScene *windowScene = (UIWindowScene *)scene;
+            if (windowScene.screen == externalScreen) {
+                targetScene = windowScene;
+                break;
+            }
+        }
+    }
+    
+    if (targetScene == nil) {
+        NSLog(@"エラー: 外部スクリーンに対応する WindowScene が見つかりませんでした。");
+    // ここで OS にシーンの作成をリクエストする高度な処理も可能。
+    // 多くの環境では接続と同時にシーンが利用可能になるため、一旦returnする。
+        return;
+    }
+
+    // UIWindow を「init(windowScene:)」で生成する
+    self.externalWindow = [[UIWindow alloc] initWithWindowScene:targetScene];
+    
+    // フレームサイズを指定する
+    self.externalWindow.frame = windowFrame;
+    
+    // StreamView を iPad から剥がし、外部ウィンドウに移動させる
+    // （self.streamView は viewDidLoad で初期化済み）
+    [self.streamView removeFromSuperview]; // 今いる場所（おそらく _scrollView か self.view）から剥がす
+    self.streamView.frame = windowFrame; // StreamViewのサイズを設定解像度に合わせる
+    [self.externalWindow addSubview:self.streamView]; // 外部ウィンドウに追加する
+    
+    // 外部ウィンドウを可視化する
+    self.externalWindow.hidden = NO;
+    
+    // iPad本体の画面にはメニューを表示する（または非表示にする）
+    // （例：_stageLabel や _spinner を再表示するなど。ここでは非表示のままにします）
+    // （_scrollView がある場合はそれを非表示にする）
+    if (_scrollView != nil) {
+        _scrollView.hidden = YES;
+    }
+    self.view.backgroundColor = [UIColor blackColor]; // iPad側を真っ黒にする
+    _stageLabel.text = @"外部モニターに出力中";
+    _stageLabel.hidden = NO;
+    _spinner.hidden = YES;
+}
+
+//外部モニタ切断時の処理
+- (void)handleScreenDisconnect:(NSNotification *)notification {
+    NSLog(@"StreamFrameViewController が切断を検知しました。");
+    
+    // 外部ウィンドウがなければ、何もしない
+    if (self.externalWindow == nil) {
+        return;
+    }
+    
+    // StreamView を外部ウィンドウから剥がし、iPad本体に戻す
+    [self.streamView removeFromSuperview]; // 外部ウィンドウから剥がす
+    
+    UIView *parentView; // iPad側の親View
+    if (_scrollView != nil) {
+        parentView = _scrollView;
+        _scrollView.hidden = NO;
+    } else {
+        parentView = self.view;
+    }
+    
+    self.streamView.frame = parentView.bounds;
+    // StreamViewのサイズを親Viewに合わせる
+    [parentView addSubview:self.streamView];
+    [parentView sendSubviewToBack:self.streamView];
+    // StreamViewを最背面に
+    
+    // iPad本体の画面（ラベルなど）を元に戻す
+    _stageLabel.hidden = YES; // 「出力中」ラベルを消す
+    _spinner.hidden = YES; // スピナーも消しておく
+    
+    // UIWindow を破棄する
+    self.externalWindow.hidden = YES;
+    self.externalWindow = nil; // nilをセットするとメモリから破棄される
+}
+
+
 - (UIView *)viewForZoomingInScrollView:(UIScrollView *)scrollView {
-    return _streamView;
+    return self.streamView;
 }
 
 - (void)willMoveToParentViewController:(UIViewController *)parent {
@@ -264,9 +383,9 @@
 - (void)updateOverlayText:(NSString*)text {
     if (_overlayView == nil) {
         _overlayView = [[UITextView alloc] init];
-#if !TARGET_OS_TV
+
         [_overlayView setEditable:NO];
-#endif
+
         [_overlayView setUserInteractionEnabled:NO];
         [_overlayView setSelectable:NO];
         [_overlayView setScrollEnabled:NO];
@@ -278,11 +397,8 @@
         
         [_overlayView setTextColor:[UIColor lightGrayColor]];
         [_overlayView setBackgroundColor:[UIColor blackColor]];
-#if TARGET_OS_TV
-        [_overlayView setFont:[UIFont systemFontOfSize:24]];
-#else
+
         [_overlayView setFont:[UIFont systemFontOfSize:12]];
-#endif
         [_overlayView setAlpha:0.5];
         [self.view addSubview:_overlayView];
     }
@@ -321,7 +437,6 @@
         [_inactivityTimer invalidate];
     }
     
-#if !TARGET_OS_TV
     // Terminate the stream if the app is inactive for 60 seconds
     Log(LOG_I, @"Starting inactivity termination timer");
     _inactivityTimer = [NSTimer scheduledTimerWithTimeInterval:60
@@ -329,7 +444,7 @@
                                                     selector:@selector(inactiveTimerExpired:)
                                                     userInfo:nil
                                                      repeats:NO];
-#endif
+
 }
 
 - (void)inactiveTimerExpired:(NSTimer*)timer {
@@ -375,7 +490,7 @@
         self->_stageLabel.hidden = YES;
         self->_tipLabel.hidden = YES;
         
-        [self->_streamView showOnScreenControls];
+        [self.streamView showOnScreenControls];
         
         [self->_controllerSupport connectionEstablished];
         
@@ -584,34 +699,7 @@
     });
 }
 
-- (void) updatePreferredDisplayMode:(BOOL)streamActive {
-#if TARGET_OS_TV
-    if (@available(tvOS 11.2, *)) {
-        UIWindow* window = [[[UIApplication sharedApplication] delegate] window];
-        AVDisplayManager* displayManager = [window avDisplayManager];
-        
-        // This logic comes from Kodi and MrMC
-        if (streamActive) {
-            int dynamicRange;
-            
-            if (LiGetCurrentHostDisplayHdrMode()) {
-                dynamicRange = 2; // HDR10
-            }
-            else {
-                dynamicRange = 0; // SDR
-            }
-            
-            AVDisplayCriteria* displayCriteria = [[AVDisplayCriteria alloc] initWithRefreshRate:[_settings.framerate floatValue]
-                                                                              videoDynamicRange:dynamicRange];
-            displayManager.preferredDisplayCriteria = displayCriteria;
-        }
-        else {
-            // Switch back to the default display mode
-            displayManager.preferredDisplayCriteria = nil;
-        }
-    }
-#endif
-}
+- (void) updatePreferredDisplayMode:(BOOL)streamActive {}
 
 - (void) setHdrMode:(bool)enabled {
     Log(LOG_I, @"HDR is now: %s", enabled ? "active" : "inactive");
@@ -632,19 +720,15 @@
 }
 
 - (void)gamepadPresenceChanged {
-#if !TARGET_OS_TV
     if (@available(iOS 11.0, *)) {
         [self setNeedsUpdateOfHomeIndicatorAutoHidden];
     }
-#endif
 }
 
 - (void)mousePresenceChanged {
-#if !TARGET_OS_TV
     if (@available(iOS 14.0, *)) {
         [self setNeedsUpdateOfPrefersPointerLocked];
     }
-#endif
 }
 
 - (void) streamExitRequested {
@@ -659,24 +743,21 @@
     // also discard our edges deferring system gestures unless
     // we willingly give up home bar hiding preference.
     _userIsInteracting = YES;
-#if !TARGET_OS_TV
+    
     if (@available(iOS 11.0, *)) {
         [self setNeedsUpdateOfHomeIndicatorAutoHidden];
     }
-#endif
 }
 
 - (void)userInteractionEnded {
     // Enable home bar hiding again if conditions allow
     _userIsInteracting = NO;
-#if !TARGET_OS_TV
+
     if (@available(iOS 11.0, *)) {
         [self setNeedsUpdateOfHomeIndicatorAutoHidden];
     }
-#endif
 }
 
-#if !TARGET_OS_TV
 // Require a confirmation when streaming to activate a system gesture
 - (UIRectEdge)preferredScreenEdgesDeferringSystemGestures {
     return UIRectEdgeAll;
@@ -684,7 +765,7 @@
 
 - (BOOL)prefersHomeIndicatorAutoHidden {
     if ([_controllerSupport getConnectedGamepadCount] > 0 &&
-        [_streamView getCurrentOscState] == OnScreenControlsLevelOff &&
+        [self.streamView getCurrentOscState] == OnScreenControlsLevelOff &&
         _userIsInteracting == NO) {
         // Autohide the home bar when a gamepad is connected
         // and the on-screen controls are disabled. We can't
@@ -699,8 +780,8 @@
     return NO;
 }
 
-- (BOOL)shouldAutorotate {
-    return YES;
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations {
+    return UIInterfaceOrientationMaskLandscape;
 }
 
 - (BOOL)prefersPointerLocked {
@@ -709,6 +790,4 @@
     // the cursor if there is a GCMouse present.
     return [GCMouse mice].count > 0;
 }
-#endif
-
 @end

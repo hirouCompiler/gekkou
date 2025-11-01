@@ -14,8 +14,7 @@
 #import "RelativeTouchHandler.h"
 #import "AbsoluteTouchHandler.h"
 #import "KeyboardInputField.h"
-
-static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
+#import <objc/runtime.h>
 
 @implementation StreamView {
     OnScreenControls* onScreenControls;
@@ -31,11 +30,6 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
     float lastMouseX;
     float lastMouseY;
     CGPoint lastScrollTranslation;
-    
-    // Citrix X1 mouse support
-    X1Mouse* x1mouse;
-    double accumulatedMouseDeltaX;
-    double accumulatedMouseDeltaY;
     
     UIResponder* touchHandler;
     
@@ -62,10 +56,6 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
     [keyInputField setSpellCheckingType:UITextSpellCheckingTypeNo];
     [self addSubview:keyInputField];
     
-#if TARGET_OS_TV
-    // tvOS requires RelativeTouchHandler to manage Apple Remote input
-    self->touchHandler = [[RelativeTouchHandler alloc] initWithView:self];
-#else
     // iOS uses RelativeTouchHandler or AbsoluteTouchHandler depending on user preference
     if (settings.absoluteTouchMode) {
         self->touchHandler = [[AbsoluteTouchHandler alloc] initWithView:self];
@@ -115,14 +105,6 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
         [self addGestureRecognizer:stylusHoverRecognizer];
     }
 #endif
-#endif
-    
-    x1mouse = [[X1Mouse alloc] init];
-    x1mouse.delegate = self;
-    
-    if (settings.btMouseSupport) {
-        [x1mouse start];
-    }
     
     // This is critical to ensure keyboard events are delivered to this
     // StreamView and not our parent UIView, especially on tvOS.
@@ -391,18 +373,30 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
 }
 
 - (UIBarButtonItem *)createButtonWithImageNamed:(NSString *)imageName backgroundColor:(UIColor *)backgroundColor target:(id)target action:(SEL)action keyCode:(NSInteger)keyCode isToggleable:(BOOL)isToggleable {
-    UIImage *image = [UIImage imageNamed:imageName];
-    UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
-    [button setImage:image forState:UIControlStateNormal];
+
+    // 1. ボタンの設定はオブジェクトを作成する
+    // .plain() は、ツールバーのボタンに適した、枠や背景のないスタイル
+    UIButtonConfiguration *config = [UIButtonConfiguration plainButtonConfiguration];
+
+    // 設定オブジェクトに画像を指定する
+    config.image = [UIImage imageNamed:imageName];
+    config.imagePadding = 6.0;
+    config.background.backgroundColor = backgroundColor;
+    config.background.cornerRadius = 10.0;
+    // この設定を使ってボタンを生成する
+    UIButton *button = [UIButton buttonWithConfiguration:config primaryAction:nil];
+    
     button.frame = CGRectMake(0, 0, 30, 30);
-    button.imageView.contentMode = UIViewContentModeScaleAspectFit;
-    button.imageView.backgroundColor = backgroundColor;
-    button.imageView.layer.cornerRadius = 10.0;
-    button.imageEdgeInsets = UIEdgeInsetsMake(6, 6, 6, 6);
+    
+    // ターゲット（押された時の動作）を追加します
     [button addTarget:target action:action forControlEvents:UIControlEventTouchUpInside];
+    
+    // 関連オブジェクト
     objc_setAssociatedObject(button, "keyCode", @(keyCode), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(button, "isToggleable", @(isToggleable), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(button, "isOn", @(NO), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    
+    // ツールバー用の UIBarButtonItem を作成して返す
     UIBarButtonItem *barButton = [[UIBarButtonItem alloc] initWithCustomView:button];
     return barButton;
 }
@@ -900,53 +894,6 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
     }
     
     return commands;
-}
-
-- (void)connectedStateDidChangeWithIdentifier:(NSUUID * _Nonnull)identifier isConnected:(BOOL)isConnected {
-    NSLog(@"Citrix X1 mouse state change: %@ -> %s",
-          identifier, isConnected ? "connected" : "disconnected");
-}
-
-- (void)mouseDidMoveWithIdentifier:(NSUUID * _Nonnull)identifier deltaX:(int16_t)deltaX deltaY:(int16_t)deltaY {
-    accumulatedMouseDeltaX += deltaX / X1_MOUSE_SPEED_DIVISOR;
-    accumulatedMouseDeltaY += deltaY / X1_MOUSE_SPEED_DIVISOR;
-    
-    short shortX = (short)accumulatedMouseDeltaX;
-    short shortY = (short)accumulatedMouseDeltaY;
-    
-    if (shortX == 0 && shortY == 0) {
-        return;
-    }
-    
-    LiSendMouseMoveEvent(shortX, shortY);
-    
-    accumulatedMouseDeltaX -= shortX;
-    accumulatedMouseDeltaY -= shortY;
-}
-
-- (int) buttonFromX1ButtonCode:(enum X1MouseButton)button {
-    switch (button) {
-        case X1MouseButtonLeft:
-            return BUTTON_LEFT;
-        case X1MouseButtonRight:
-            return BUTTON_RIGHT;
-        case X1MouseButtonMiddle:
-            return BUTTON_MIDDLE;
-        default:
-            return -1;
-    }
-}
-
-- (void)mouseDownWithIdentifier:(NSUUID * _Nonnull)identifier button:(enum X1MouseButton)button {
-    LiSendMouseButtonEvent(BUTTON_ACTION_PRESS, [self buttonFromX1ButtonCode:button]);
-}
-
-- (void)mouseUpWithIdentifier:(NSUUID * _Nonnull)identifier button:(enum X1MouseButton)button {
-    LiSendMouseButtonEvent(BUTTON_ACTION_RELEASE, [self buttonFromX1ButtonCode:button]);
-}
-
-- (void)wheelDidScrollWithIdentifier:(NSUUID * _Nonnull)identifier deltaZ:(int8_t)deltaZ {
-    LiSendScrollEvent(deltaZ);
 }
 
 #if !TARGET_OS_TV

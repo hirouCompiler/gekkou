@@ -8,7 +8,6 @@
 
 #import "ControllerSupport.h"
 #import "OnScreenControls.h"
-#import "Moonlight-Swift.h"
 #import "StreamConfiguration.h"
 
 @protocol UserInteractionDelegate <NSObject>
@@ -18,11 +17,8 @@
 
 @end
 
-#if TARGET_OS_TV
-@interface StreamView : UIView <X1KitMouseDelegate, UITextFieldDelegate>
-#else
-@interface StreamView : UIView <X1KitMouseDelegate, UITextFieldDelegate, UIPointerInteractionDelegate>
-#endif
+
+@interface StreamView : UIView <UITextFieldDelegate, UIPointerInteractionDelegate>
 
 - (void) setupStreamView:(ControllerSupport*)controllerSupport
      interactionDelegate:(id<UserInteractionDelegate>)interactionDelegate
@@ -30,8 +26,6 @@
 - (void) showOnScreenControls;
 - (OnScreenControlsLevel) getCurrentOscState;
 
-#if !TARGET_OS_TV
-- (void) updateCursorLocation:(CGPoint)location isMouse:(BOOL)isMouse;
-#endif
 
+- (void) updateCursorLocation:(CGPoint)location isMouse:(BOOL)isMouse;
 @end
