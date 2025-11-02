@@ -1,4 +1,6 @@
-# Moonlight iOS/tvOS
+# Moonlight-modified for ipad(projectname gekkou)
+This project is a fork of moonlight-ios. I created it to add features that I like. Please be aware of this in advance.  
+Below is an overview of the original moonlight-ios project.  
 
 [![AppVeyor Build Status](https://ci.appveyor.com/api/projects/status/kwv8vpwr457lqn25/branch/master?svg=true)](https://ci.appveyor.com/project/cgutman/moonlight-ios/branch/master)
 
